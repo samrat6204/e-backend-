@@ -14,9 +14,28 @@ class User(AbstractUser):
     def __str__(self):
         return self.username
 
-    class Category(models.Model):
-        name =models.CharField(max_length=100)
-        description = models.TextField
 
-        def __str__(self):
-            return self.name
+
+
+
+class Category(models.Model):#this class is to push in db and id . id auto generate huncha 
+    name =models.CharField(max_length=100)
+    description = models.CharField(max_length=100)
+
+    def __str__(self):
+        return self.name
+
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.IntegerField()
+
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE
+    )
+
+    def __str__(self):
+        return self.name

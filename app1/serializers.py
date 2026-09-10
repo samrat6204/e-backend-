@@ -4,7 +4,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User
+from .models import User,Category,Product
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -98,19 +98,31 @@ class LoginSerializer(serializers.Serializer):
 
 
 
-# class CategorySerializer(serializers.ModelSerializer):
+class CategorySerializer(serializers.ModelSerializer):
 
-#     class Meta:
-#         model = Category
+    class Meta:
+        model = Category
 
-#         fields = [
-#             "id",
-#             "name",
-#             "description",
-#         ]
+        fields = [
+            "id",
+            "name",
+            "description",
+        ]
 
 
+class ProductSerializer(serializers.ModelSerializer):
 
+    class Meta:
+        model = Product
+
+        fields = [
+            "id",
+            "name",
+            "description",
+            "price",
+            "quantity",
+            "category",
+        ]
 
 
 # class ProductListSerializer(serializers.ModelSerializer):
