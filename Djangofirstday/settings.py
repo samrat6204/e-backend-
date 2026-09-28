@@ -31,6 +31,7 @@ DEBUG = True
 
 INSTALLED_APPS = [
     "rest_framework",
+    "rest_framework_simplejwt",
     "corsheaders",
     'django.contrib.admin',
     'django.contrib.auth',
@@ -40,6 +41,20 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'app1',
 ]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
 
 
 
@@ -64,7 +79,7 @@ ROOT_URLCONF = 'Djangofirstday.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'app1' / 'Templets'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -132,8 +147,20 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# MAILERS = {
+#     'default': {
+#         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+#     },
+# }
+
+
+EMAIL_BACKEND = 'app1.email_backend.NoVerifyEmailBackend'
+
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = 'samratlamichhane46@gmail.com'
+EMAIL_HOST_PASSWORD = 'yxsm smyd ljtc elnn'
+
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER

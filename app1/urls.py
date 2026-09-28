@@ -4,25 +4,71 @@ from .views import (
     register_view,
     login_view,
     category_list,
-    product_list
+    product_list,
+    cart_list,
+    add_to_cart,
+    cart_item_detail,
+    cart_details,
+    checkout
 )
 
-
 urlpatterns = [
-    path("api/register/", register_view, name="register"),
 
-    path("api/login/", login_view,name="login" ),
-    path("categories/", category_list, name="categories"),
-    path("products/", product_list, name="product_list")
+    # USER / AUTH
+    path(
+        "register/",
+        register_view,
+        name="register"
+    ),
 
-    
-    # path("categories/", category_list, name="category-list"),
-    # path("categories/<int:id>/", category_detail, name="category-detail"),
-    # path("profile/", profile_view, name="profile"),
+    path(
+        "login/",
+        login_view,
+        name="login"
+    ),
 
+    # CATEGORY
+    path(
+        "categories/",
+        category_list,
+        name="categories"
+    ),
 
-    # path("products/",product_list,name="product-list"),
+    # PRODUCT
+    path(
+        "products/",
+        product_list,
+        name="product_list"
+    ),
 
-    # path("products/<int:id>/", product_detail, name="product-detail")
+    # CART
+    path(
+        "cart/",
+        cart_list,
+        name="cart_list"
+    ),
 
+    path(
+        "cart/add/",
+        add_to_cart,
+        name="add_to_cart"
+    ),
+
+    path(
+        "cart/item/<int:item_id>/",
+        cart_item_detail,
+        name="cart_item_detail"
+    ),
+
+    path(
+        "cart/<int:cart_id>/",
+        cart_details,
+        name="cart_details"
+    ),
+
+    path(
+        "checkout/",
+        checkout,
+        name="checkout"
+    ),
 ]
