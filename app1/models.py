@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
+# Models for the e-commerce app
+
 class User(AbstractUser):
     full_name = models.CharField(max_length=150)
 
@@ -39,3 +41,43 @@ class Product(models.Model):
 
     def __str__(self):
         return self.name
+
+
+
+
+    # '''''''''''''''''''''''''''''''''''''''''''''
+class Cart(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE
+    )
+
+    def __str__(self):
+        return f"Cart of {self.user.username}"
+
+
+class CartDetails(models.Model):
+    cart = models.ForeignKey(
+        Cart,
+        on_delete=models.CASCADE,
+        related_name="cart_details"
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE
+    )
+
+    price_per = models.DecimalField(
+        max_digits=10,
+        decimal_places=2
+    )
+
+    quantity = models.IntegerField()
+
+    @property
+    def total_amount(self):
+        return self.price_per * self.quantity
+
+    def __str__(self):
+        return f"{self.product.name} - {self.quantity}"
