@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 # Models for the e-commerce app
+# task completed
 
 class User(AbstractUser):
     full_name = models.CharField(max_length=150)
