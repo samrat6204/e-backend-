@@ -3,6 +3,7 @@ from django.db import models
 
 # Models for the e-commerce app
 # task completed
+# updated: 2026-10-05
 
 class User(AbstractUser):
     full_name = models.CharField(max_length=150)
