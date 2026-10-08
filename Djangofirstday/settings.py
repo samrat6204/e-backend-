@@ -61,6 +61,10 @@ SIMPLE_JWT = {
 CORS_ALLOW_ALL_ORIGINS = True
 ALLOWED_HOSTS = ["*"]
 
+# Prevent 500 error when URL is missing trailing slash
+# Returns 404 instead of crashing on POST redirect
+APPEND_SLASH = False
+
 
 
 MIDDLEWARE = [
