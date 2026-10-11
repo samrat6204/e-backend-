@@ -26,26 +26,28 @@ from .serializers import (
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def register_view(request):
+    try:
+        serializer = RegisterSerializer(data=request.data)
 
-    serializer = RegisterSerializer(
-        data=request.data
-    )
-
-    if serializer.is_valid():
-        user = serializer.save()
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response(
+                {
+                    "message": "Registration successful.",
+                    "user": RegisterSerializer(user).data,
+                },
+                status=status.HTTP_201_CREATED
+            )
 
         return Response(
-            {
-                "message": "Registration successful.",
-                "user": RegisterSerializer(user).data,
-            },
-            status=status.HTTP_201_CREATED
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
         )
-
-    return Response(
-        serializer.errors,
-        status=status.HTTP_400_BAD_REQUEST
-    )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 # ============================================================
