@@ -6,8 +6,9 @@ from rest_framework.response import Response
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
+from django.db.models import Avg
 
-from .models import User, Category, Product, Cart, CartDetails
+from .models import User, Category, Product, Cart, CartDetails, Rating
 
 from .serializers import (
     RegisterSerializer,
@@ -458,3 +459,56 @@ def checkout(request):
             {"error": str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# ============================================================
+# RATE A PRODUCT (NEW)
+# ============================================================
+
+# POST /products/<product_id>/rate/   body: {"score": 1-5}
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def rate_product(request, product_id):
+
+    try:
+        product = Product.objects.get(id=product_id)
+    except Product.DoesNotExist:
+        return Response(
+            {"error": "Product not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    score = request.data.get("score")
+
+    try:
+        score = int(score)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "score must be a number from 1 to 5"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if score < 1 or score > 5:
+        return Response(
+            {"error": "score must be between 1 and 5"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # create the rating, or update it if this user already rated
+    Rating.objects.update_or_create(
+        user=request.user,
+        product=product,
+        defaults={"score": score}
+    )
+
+    avg = product.ratings.aggregate(avg=Avg("score"))["avg"]
+
+    return Response(
+        {
+            "message": "Rating saved.",
+            "my_rating": score,
+            "average_rating": round(avg, 1) if avg else 0,
+            "rating_count": product.ratings.count(),
+        },
+        status=status.HTTP_200_OK
+    )

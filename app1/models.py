@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 # Models for the e-commerce app
@@ -14,6 +15,10 @@ class User(AbstractUser):
     )
 
     email = models.EmailField(unique=True)
+
+
+
+
 
     def __str__(self):
         return self.username
@@ -83,3 +88,35 @@ class CartDetails(models.Model):
 
     def __str__(self):
         return f"{self.product.name} - {self.quantity}"
+
+
+# ============================================================
+# RATING (NEW)
+# ============================================================
+
+class Rating(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="ratings"
+    )
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="ratings"
+    )
+
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # one rating per user per product
+        unique_together = ("user", "product")
+
+    def __str__(self):
+        return f"{self.user.username} rated {self.product.name}: {self.score}"

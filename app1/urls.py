@@ -9,7 +9,8 @@ from .views import (
     add_to_cart,
     cart_item_detail,
     cart_details,
-    checkout
+    checkout,
+    rate_product,
 )
 
 urlpatterns = [
@@ -39,6 +40,13 @@ urlpatterns = [
         "products/",
         product_list,
         name="product_list"
+    ),
+
+    # PRODUCT RATING (NEW)
+    path(
+        "products/<int:product_id>/rate/",
+        rate_product,
+        name="rate_product"
     ),
 
     # CART
