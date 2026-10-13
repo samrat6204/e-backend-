@@ -1,5 +1,5 @@
 from django.contrib.auth import authenticate
-from django.db.models import Avg
+from django.utils.html import strip_tags
 
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -93,24 +93,6 @@ class LoginSerializer(serializers.Serializer):
 
 
 # ============================================================
-# OLD PROFILE SERIALIZER
-# ============================================================
-
-# class ProfileSerializer(serializers.ModelSerializer):
-
-#     class Meta:
-#         model = User
-
-#         fields = [
-#             "id",
-#             "username",
-#             "full_name",
-#             "email",
-#             "phone_number",
-#         ]
-
-
-# ============================================================
 # CATEGORY SERIALIZER
 # ============================================================
 
@@ -127,13 +109,21 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# PRODUCT SERIALIZER  (rating fields added)
+# PRODUCT SERIALIZER
+# average_rating and review_count are now stored on the Product,
+# so no extra database work is needed for each product.
 # ============================================================
 
 class ProductSerializer(serializers.ModelSerializer):
 
-    average_rating = serializers.SerializerMethodField()
-    rating_count = serializers.SerializerMethodField()
+    average_rating = serializers.FloatField(read_only=True)
+    review_count = serializers.IntegerField(read_only=True)
+
+    # kept so your React code that uses "rating_count" keeps working
+    rating_count = serializers.IntegerField(
+        source="review_count",
+        read_only=True
+    )
 
     class Meta:
         model = Product
@@ -146,50 +136,9 @@ class ProductSerializer(serializers.ModelSerializer):
             "quantity",
             "category",
             "average_rating",
+            "review_count",
             "rating_count",
         ]
-
-    def get_average_rating(self, obj):
-        avg = obj.ratings.aggregate(avg=Avg("score"))["avg"]
-        return round(avg, 1) if avg else 0
-
-    def get_rating_count(self, obj):
-        return obj.ratings.count()
-
-
-# ============================================================
-# OLD PRODUCT LIST SERIALIZER
-# ============================================================
-
-# class ProductListSerializer(serializers.ModelSerializer):
-
-#     class Meta:
-#         model = Product
-
-#         fields = [
-#             "id",
-#             "name",
-#             "price",
-#         ]
-
-
-# ============================================================
-# OLD PRODUCT DETAIL SERIALIZER
-# ============================================================
-
-# class ProductDetailSerializer(serializers.ModelSerializer):
-
-#     class Meta:
-#         model = Product
-
-#         fields = [
-#             "id",
-#             "name",
-#             "description",
-#             "price",
-#             "quantity",
-#             "category",
-#         ]
 
 
 # ============================================================
@@ -240,11 +189,82 @@ class CartSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# RATING SERIALIZER (NEW)
+# RATING / REVIEW SERIALIZER
+# The user can only send "score" and "comment".
+# product, user and status are set by the server, never by the client.
 # ============================================================
 
 class RatingSerializer(serializers.ModelSerializer):
 
+    username = serializers.CharField(
+        source="user.username",
+        read_only=True
+    )
+
     class Meta:
         model = Rating
-        fields = ["id", "product", "score"]
+
+        fields = [
+            "id",
+            "product",
+            "username",
+            "score",
+            "comment",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+
+        read_only_fields = [
+            "id",
+            "product",
+            "username",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_comment(self, value):
+        # remove any HTML tags and extra spaces
+        return strip_tags(value).strip()
+
+
+# ============================================================
+# MODERATION SERIALIZER (admin only)
+# Admin can change only the status.
+# ============================================================
+
+class RatingModerationSerializer(serializers.ModelSerializer):
+
+    username = serializers.CharField(
+        source="user.username",
+        read_only=True
+    )
+    product_name = serializers.CharField(
+        source="product.name",
+        read_only=True
+    )
+
+    class Meta:
+        model = Rating
+
+        fields = [
+            "id",
+            "product",
+            "product_name",
+            "username",
+            "score",
+            "comment",
+            "status",
+            "created_at",
+        ]
+
+        read_only_fields = [
+            "id",
+            "product",
+            "product_name",
+            "username",
+            "score",
+            "comment",
+            "created_at",
+        ]
