@@ -1,10 +1,11 @@
 from django.contrib.auth import authenticate
+from django.utils import timezone
 from django.utils.html import strip_tags
 
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, Category, Product, Cart, CartDetails, Rating
+from .models import User, Category, Product, Cart, CartDetails, Rating, Coupon
 
 
 # ============================================================
@@ -110,8 +111,6 @@ class CategorySerializer(serializers.ModelSerializer):
 
 # ============================================================
 # PRODUCT SERIALIZER
-# average_rating and review_count are now stored on the Product,
-# so no extra database work is needed for each product.
 # ============================================================
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -190,8 +189,6 @@ class CartSerializer(serializers.ModelSerializer):
 
 # ============================================================
 # RATING / REVIEW SERIALIZER
-# The user can only send "score" and "comment".
-# product, user and status are set by the server, never by the client.
 # ============================================================
 
 class RatingSerializer(serializers.ModelSerializer):
@@ -231,7 +228,6 @@ class RatingSerializer(serializers.ModelSerializer):
 
 # ============================================================
 # MODERATION SERIALIZER (admin only)
-# Admin can change only the status.
 # ============================================================
 
 class RatingModerationSerializer(serializers.ModelSerializer):
@@ -268,3 +264,101 @@ class RatingModerationSerializer(serializers.ModelSerializer):
             "comment",
             "created_at",
         ]
+
+
+# ============================================================
+# COUPON SERIALIZER (admin only)
+# used_count is read-only: only the system changes it, never the admin
+# ============================================================
+
+class CouponSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Coupon
+
+        fields = [
+            "id",
+            "code",
+            "discount_type",
+            "discount_value",
+            "max_discount",
+            "min_order_value",
+            "start_date",
+            "expiry_date",
+            "usage_limit",
+            "used_count",
+            "is_active",
+            "created_at",
+        ]
+
+        read_only_fields = ["id", "used_count", "created_at"]
+
+    def validate_code(self, value):
+        value = value.strip().upper()
+
+        if not value:
+            raise serializers.ValidationError("Code cannot be empty.")
+
+        # "save10" and "SAVE10" must count as the same code
+        duplicate = Coupon.objects.filter(code__iexact=value)
+        if self.instance:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise serializers.ValidationError("A coupon with this code already exists.")
+
+        return value
+
+    def validate_discount_value(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Discount value must be more than 0.")
+        return value
+
+    def validate_max_discount(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Max discount must be more than 0.")
+        return value
+
+    def validate_min_order_value(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Minimum order value cannot be negative.")
+        return value
+
+    def validate_usage_limit(self, value):
+        if value is not None and value < 1:
+            raise serializers.ValidationError("Usage limit must be at least 1.")
+        return value
+
+    def validate(self, data):
+        # For PATCH, fields that were not sent come from the saved coupon.
+        def current(field):
+            if field in data:
+                return data[field]
+            return getattr(self.instance, field, None)
+
+        discount_type = current("discount_type")
+        discount_value = current("discount_value")
+        start_date = current("start_date") or timezone.now()
+        expiry_date = current("expiry_date")
+
+        if (
+            discount_type == Coupon.DiscountType.PERCENTAGE
+            and discount_value is not None
+            and discount_value > 100
+        ):
+            raise serializers.ValidationError(
+                {"discount_value": "Percentage cannot be more than 100."}
+            )
+
+        if expiry_date and expiry_date <= start_date:
+            raise serializers.ValidationError(
+                {"expiry_date": "Expiry date must be after the start date."}
+            )
+
+        # a usage limit lower than the times already used makes no sense
+        new_limit = current("usage_limit")
+        if self.instance and new_limit is not None and new_limit < self.instance.used_count:
+            raise serializers.ValidationError(
+                {"usage_limit": "Usage limit cannot be lower than the times already used."}
+            )
+
+        return data

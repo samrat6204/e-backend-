@@ -1,14 +1,18 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import (
+    IsAuthenticated,
+    IsAuthenticatedOrReadOnly,
+    IsAdminUser,
+    AllowAny,
+)
 from rest_framework.response import Response
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
-from django.db.models import Avg
+from django.db import IntegrityError
 
-from .models import User, Category, Product, Cart, CartDetails, Rating
+from .models import User, Category, Product, Cart, CartDetails, Rating, Coupon
 
 from .serializers import (
     RegisterSerializer,
@@ -16,8 +20,22 @@ from .serializers import (
     CategorySerializer,
     ProductSerializer,
     CartSerializer,
-    CartDetailsSerializer
+    CartDetailsSerializer,
+    RatingSerializer,
+    RatingModerationSerializer,
+    CouponSerializer,
 )
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def user_has_purchased(user, product):
+    # TODO: after we create Order and OrderItem models,
+    # check here that this user really bought this product.
+    # Until then everyone is allowed to review.
+    return True
 
 
 # ============================================================
@@ -411,7 +429,11 @@ def cart_details(request, cart_id):
         data,
         status=status.HTTP_200_OK
     )
-# ------------------------------------------------
+
+
+# ============================================================
+# CHECKOUT
+# ============================================================
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -462,10 +484,152 @@ def checkout(request):
 
 
 # ============================================================
-# RATE A PRODUCT (NEW)
+# REVIEWS: LIST + CREATE
 # ============================================================
 
-# POST /products/<product_id>/rate/   body: {"score": 1-5}
+# GET  /products/<product_id>/reviews/   (anyone)
+# POST /products/<product_id>/reviews/   (logged in)  body: {"score": 1-5, "comment": "..."}
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def product_reviews(request, product_id):
+
+    try:
+        product = Product.objects.get(id=product_id)
+    except Product.DoesNotExist:
+        return Response(
+            {"error": "Product not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # ---------- GET: show approved reviews ----------
+    if request.method == "GET":
+
+        reviews = (
+            product.ratings
+            .filter(status=Rating.Status.APPROVED)
+            .select_related("user")
+            .order_by("-created_at")
+        )
+
+        my_review = None
+        if request.user.is_authenticated:
+            mine = Rating.objects.filter(
+                user=request.user,
+                product=product
+            ).first()
+            if mine:
+                my_review = RatingSerializer(mine).data
+
+        return Response(
+            {
+                "average_rating": float(product.average_rating),
+                "review_count": product.review_count,
+                "my_review": my_review,
+                "reviews": RatingSerializer(reviews, many=True).data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # ---------- POST: add a review ----------
+    if not user_has_purchased(request.user, product):
+        return Response(
+            {"error": "Only customers who bought this product can review it."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    if Rating.objects.filter(user=request.user, product=product).exists():
+        return Response(
+            {"error": "You already reviewed this product. Edit your review instead."},
+            status=status.HTTP_409_CONFLICT
+        )
+
+    serializer = RatingSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        # user and product come from the server, never from the request body
+        serializer.save(user=request.user, product=product)
+    except IntegrityError:
+        # two requests at the same moment: the database blocks the second one
+        return Response(
+            {"error": "You already reviewed this product."},
+            status=status.HTTP_409_CONFLICT
+        )
+
+    return Response(
+        {
+            "message": "Review added.",
+            "review": serializer.data,
+        },
+        status=status.HTTP_201_CREATED
+    )
+
+
+# ============================================================
+# REVIEWS: EDIT / DELETE (owner or admin)
+# ============================================================
+
+# PATCH  /reviews/<review_id>/   body: {"score": 4, "comment": "..."}
+# DELETE /reviews/<review_id>/
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def review_detail(request, review_id):
+
+    try:
+        review = Rating.objects.select_related("user", "product").get(id=review_id)
+    except Rating.DoesNotExist:
+        return Response(
+            {"error": "Review not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # ownership check: only the owner (or an admin) can change it
+    if review.user_id != request.user.id and not request.user.is_staff:
+        return Response(
+            {"error": "You can only change your own review."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    if request.method == "DELETE":
+        review.delete()
+        return Response(
+            {"message": "Review deleted."},
+            status=status.HTTP_200_OK
+        )
+
+    serializer = RatingSerializer(
+        review,
+        data=request.data,
+        partial=True
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer.save()
+
+    return Response(
+        {
+            "message": "Review updated.",
+            "review": serializer.data,
+        },
+        status=status.HTTP_200_OK
+    )
+
+
+# ============================================================
+# QUICK RATE (old endpoint, kept so your frontend still works)
+# ============================================================
+
+# POST /products/<product_id>/rate/   body: {"score": 1-5, "comment": "optional"}
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def rate_product(request, product_id):
@@ -478,37 +642,221 @@ def rate_product(request, product_id):
             status=status.HTTP_404_NOT_FOUND
         )
 
-    score = request.data.get("score")
-
-    try:
-        score = int(score)
-    except (TypeError, ValueError):
+    if not user_has_purchased(request.user, product):
         return Response(
-            {"error": "score must be a number from 1 to 5"},
-            status=status.HTTP_400_BAD_REQUEST
+            {"error": "Only customers who bought this product can review it."},
+            status=status.HTTP_403_FORBIDDEN
         )
 
-    if score < 1 or score > 5:
-        return Response(
-            {"error": "score must be between 1 and 5"},
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    # create the rating, or update it if this user already rated
-    Rating.objects.update_or_create(
+    existing = Rating.objects.filter(
         user=request.user,
-        product=product,
-        defaults={"score": score}
+        product=product
+    ).first()
+
+    # if the user already rated, update it. Otherwise create a new one.
+    serializer = RatingSerializer(
+        existing,
+        data=request.data,
+        partial=existing is not None
     )
 
-    avg = product.ratings.aggregate(avg=Avg("score"))["avg"]
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        rating = serializer.save(user=request.user, product=product)
+    except IntegrityError:
+        return Response(
+            {"error": "You already reviewed this product."},
+            status=status.HTTP_409_CONFLICT
+        )
+
+    product.refresh_from_db()
 
     return Response(
         {
             "message": "Rating saved.",
-            "my_rating": score,
-            "average_rating": round(avg, 1) if avg else 0,
-            "rating_count": product.ratings.count(),
+            "my_rating": rating.score,
+            "average_rating": float(product.average_rating),
+            "rating_count": product.review_count,
+        },
+        status=status.HTTP_200_OK
+    )
+
+
+# ============================================================
+# ADMIN MODERATION
+# ============================================================
+
+# GET /moderation/reviews/?status=pending|approved|hidden
+@api_view(["GET"])
+@permission_classes([IsAdminUser])
+def moderation_review_list(request):
+
+    reviews = (
+        Rating.objects
+        .select_related("user", "product")
+        .order_by("-created_at")
+    )
+
+    status_filter = request.query_params.get("status")
+
+    if status_filter:
+        if status_filter not in Rating.Status.values:
+            return Response(
+                {"error": f"status must be one of {list(Rating.Status.values)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        reviews = reviews.filter(status=status_filter)
+
+    return Response(
+        RatingModerationSerializer(reviews, many=True).data,
+        status=status.HTTP_200_OK
+    )
+
+
+# PATCH  /moderation/reviews/<review_id>/   body: {"status": "hidden"}
+# DELETE /moderation/reviews/<review_id>/
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAdminUser])
+def moderation_review_detail(request, review_id):
+
+    try:
+        review = Rating.objects.select_related("user", "product").get(id=review_id)
+    except Rating.DoesNotExist:
+        return Response(
+            {"error": "Review not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "DELETE":
+        review.delete()
+        return Response(
+            {"message": "Review deleted by admin."},
+            status=status.HTTP_200_OK
+        )
+
+    serializer = RatingModerationSerializer(
+        review,
+        data=request.data,
+        partial=True
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer.save()
+
+    return Response(
+        {
+            "message": "Review status updated.",
+            "review": serializer.data,
+        },
+        status=status.HTTP_200_OK
+    )
+
+
+# ============================================================
+# ADMIN: COUPON LIST + CREATE
+# ============================================================
+
+# GET  /manage/coupons/?active=true|false
+# POST /manage/coupons/
+@api_view(["GET", "POST"])
+@permission_classes([IsAdminUser])
+def coupon_list(request):
+
+    # ---------- GET: list all coupons ----------
+    if request.method == "GET":
+
+        coupons = Coupon.objects.all().order_by("-created_at")
+
+        active = request.query_params.get("active")
+        if active is not None:
+            coupons = coupons.filter(is_active=active.lower() == "true")
+
+        return Response(
+            CouponSerializer(coupons, many=True).data,
+            status=status.HTTP_200_OK
+        )
+
+    # ---------- POST: create a coupon ----------
+    serializer = CouponSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer.save()
+
+    return Response(
+        {
+            "message": "Coupon created.",
+            "coupon": serializer.data,
+        },
+        status=status.HTTP_201_CREATED
+    )
+
+
+# ============================================================
+# ADMIN: COUPON VIEW / EDIT / DELETE
+# ============================================================
+
+# GET    /manage/coupons/<coupon_id>/
+# PATCH  /manage/coupons/<coupon_id>/
+# DELETE /manage/coupons/<coupon_id>/
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAdminUser])
+def coupon_detail(request, coupon_id):
+
+    try:
+        coupon = Coupon.objects.get(id=coupon_id)
+    except Coupon.DoesNotExist:
+        return Response(
+            {"error": "Coupon not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "GET":
+        return Response(
+            CouponSerializer(coupon).data,
+            status=status.HTTP_200_OK
+        )
+
+    if request.method == "DELETE":
+        coupon.delete()
+        return Response(
+            {"message": "Coupon deleted."},
+            status=status.HTTP_200_OK
+        )
+
+    # PATCH
+    serializer = CouponSerializer(
+        coupon,
+        data=request.data,
+        partial=True
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer.save()
+
+    return Response(
+        {
+            "message": "Coupon updated.",
+            "coupon": serializer.data,
         },
         status=status.HTTP_200_OK
     )

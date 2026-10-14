@@ -11,72 +11,47 @@ from .views import (
     cart_details,
     checkout,
     rate_product,
+    product_reviews,
+    review_detail,
+    moderation_review_list,
+    moderation_review_detail,
+    coupon_list,
+    coupon_detail,
 )
 
 urlpatterns = [
 
     # USER / AUTH
-    path(
-        "register/",
-        register_view,
-        name="register"
-    ),
-
-    path(
-        "login/",
-        login_view,
-        name="login"
-    ),
+    path("register/", register_view, name="register"),
+    path("login/", login_view, name="login"),
 
     # CATEGORY
-    path(
-        "categories/",
-        category_list,
-        name="categories"
-    ),
+    path("categories/", category_list, name="categories"),
 
     # PRODUCT
-    path(
-        "products/",
-        product_list,
-        name="product_list"
-    ),
+    path("products/", product_list, name="product_list"),
 
-    # PRODUCT RATING (NEW)
-    path(
-        "products/<int:product_id>/rate/",
-        rate_product,
-        name="rate_product"
-    ),
+    # PRODUCT RATING (old quick-rate endpoint)
+    path("products/<int:product_id>/rate/", rate_product, name="rate_product"),
+
+    # REVIEWS
+    path("products/<int:product_id>/reviews/", product_reviews, name="product_reviews"),
+    path("reviews/<int:review_id>/", review_detail, name="review_detail"),
+
+    # ADMIN MODERATION
+    path("moderation/reviews/", moderation_review_list, name="moderation_review_list"),
+    path("moderation/reviews/<int:review_id>/", moderation_review_detail, name="moderation_review_detail"),
+
+    # ADMIN COUPONS (NEW)
+    path("manage/coupons/", coupon_list, name="coupon_list"),
+    path("manage/coupons/<int:coupon_id>/", coupon_detail, name="coupon_detail"),
 
     # CART
-    path(
-        "cart/",
-        cart_list,
-        name="cart_list"
-    ),
+    path("cart/", cart_list, name="cart_list"),
+    path("cart/add/", add_to_cart, name="add_to_cart"),
+    path("cart/item/<int:item_id>/", cart_item_detail, name="cart_item_detail"),
+    path("cart/<int:cart_id>/", cart_details, name="cart_details"),
 
-    path(
-        "cart/add/",
-        add_to_cart,
-        name="add_to_cart"
-    ),
-
-    path(
-        "cart/item/<int:item_id>/",
-        cart_item_detail,
-        name="cart_item_detail"
-    ),
-
-    path(
-        "cart/<int:cart_id>/",
-        cart_details,
-        name="cart_details"
-    ),
-
-    path(
-        "checkout/",
-        checkout,
-        name="checkout"
-    ),
+    # CHECKOUT
+    path("checkout/", checkout, name="checkout"),
 ]

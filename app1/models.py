@@ -1,10 +1,12 @@
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.db.models import Avg, Count
+from django.utils import timezone
 
 # Models for the e-commerce app
-# updated: Week 7 - Ratings & Reviews
+# updated: Week 7 - Ratings & Reviews, Coupons
 
 
 class User(AbstractUser):
@@ -30,7 +32,7 @@ class Product(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.IntegerField()
 
-    # NEW: cached rating stats, so product pages don't recalculate every view
+    # cached rating stats, so product pages don't recalculate every view
     average_rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
     review_count = models.PositiveIntegerField(default=0)
 
@@ -39,7 +41,7 @@ class Product(models.Model):
     def __str__(self):
         return self.name
 
-    # NEW: recalculates stats from approved ratings only
+    # recalculates stats from approved ratings only
     def update_rating_stats(self):
         stats = self.ratings.filter(status="approved").aggregate(
             avg=Avg("score"), count=Count("id")
@@ -101,7 +103,6 @@ class Rating(models.Model):
             models.UniqueConstraint(
                 fields=["user", "product"], name="unique_rating_per_user_product"
             ),
-            # On Django older than 5.1, change `condition=` to `check=`
             models.CheckConstraint(
                 condition=models.Q(score__gte=1, score__lte=5),
                 name="rating_score_between_1_and_5",
@@ -110,3 +111,56 @@ class Rating(models.Model):
 
     def __str__(self):
         return f"{self.user.username} rated {self.product.name}: {self.score}"
+
+
+# ============================================================
+# COUPON
+# ============================================================
+
+class Coupon(models.Model):
+    class DiscountType(models.TextChoices):
+        PERCENTAGE = "percentage", "Percentage"
+        FIXED = "fixed", "Fixed amount"
+
+    code = models.CharField(max_length=30, unique=True)
+    discount_type = models.CharField(max_length=12, choices=DiscountType.choices)
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2)
+
+    # for percentage coupons: the most money one coupon can take off (optional)
+    max_discount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True
+    )
+
+    min_order_value = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0
+    )
+
+    start_date = models.DateTimeField(default=timezone.now)
+    expiry_date = models.DateTimeField()
+
+    # empty = unlimited uses
+    usage_limit = models.PositiveIntegerField(null=True, blank=True)
+    used_count = models.PositiveIntegerField(default=0)
+
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.discount_value is not None and self.discount_value <= 0:
+            raise ValidationError("Discount value must be more than 0.")
+        if (
+            self.discount_type == self.DiscountType.PERCENTAGE
+            and self.discount_value is not None
+            and self.discount_value > 100
+        ):
+            raise ValidationError("Percentage cannot be more than 100.")
+        if self.expiry_date and self.start_date and self.expiry_date <= self.start_date:
+            raise ValidationError("Expiry date must be after the start date.")
+
+    def save(self, *args, **kwargs):
+        # always store the code in capital letters, so "save10" = "SAVE10"
+        self.code = self.code.strip().upper()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.code
