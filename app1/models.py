@@ -7,6 +7,7 @@ from django.utils import timezone
 
 # Models for the e-commerce app
 # updated: Week 7 - Ratings & Reviews, Coupons
+# updated: Payment & checkout revision - Order, OrderItem (added at the bottom)
 
 
 class User(AbstractUser):
@@ -164,3 +165,79 @@ class Coupon(models.Model):
 
     def __str__(self):
         return self.code
+
+
+# ============================================================
+# ORDER  (NEW - payment & checkout revision)
+# ============================================================
+
+class Order(models.Model):
+    class PaymentMethod(models.TextChoices):
+        COD = "cod", "Cash on Delivery"
+        ONLINE = "online", "Online Payment (QR)"
+
+    class PaymentStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PAID = "paid", "Paid"
+        FAILED = "failed", "Failed"
+
+    class OrderStatus(models.TextChoices):
+        PLACED = "placed", "Placed"
+        CONFIRMED = "confirmed", "Confirmed"
+        SHIPPED = "shipped", "Shipped"
+        DELIVERED = "delivered", "Delivered"
+        CANCELLED = "cancelled", "Cancelled"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="orders")
+
+    # delivery details (saved on the order, so later profile changes don't alter it)
+    full_name = models.CharField(max_length=150)
+    phone_number = models.CharField(max_length=20)
+    address = models.CharField(max_length=500)
+    note = models.CharField(max_length=500, blank=True)
+
+    payment_method = models.CharField(max_length=10, choices=PaymentMethod.choices)
+    payment_status = models.CharField(
+        max_length=10, choices=PaymentStatus.choices, default=PaymentStatus.PENDING
+    )
+    # optional: transaction id the customer types after paying by QR
+    payment_reference = models.CharField(max_length=100, blank=True)
+    terms_accepted = models.BooleanField(default=False)
+
+    order_status = models.CharField(
+        max_length=10, choices=OrderStatus.choices, default=OrderStatus.PLACED
+    )
+
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    total = models.DecimalField(max_digits=10, decimal_places=2)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @property
+    def order_number(self):
+        return f"ORD-{self.pk:06d}"
+
+    def __str__(self):
+        return f"{self.order_number} - {self.user.username}"
+
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+
+    # product can be deleted later, the order history must stay
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
+    product_name = models.CharField(max_length=100)
+    price_per = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity = models.PositiveIntegerField()
+
+    @property
+    def total_amount(self):
+        return self.price_per * self.quantity
+
+    def __str__(self):
+        return f"{self.product_name} x {self.quantity}"

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import (
@@ -10,9 +12,19 @@ from rest_framework.response import Response
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 
-from .models import User, Category, Product, Cart, CartDetails, Rating, Coupon
+from .models import (
+    User,
+    Category,
+    Product,
+    Cart,
+    CartDetails,
+    Rating,
+    Coupon,
+    Order,
+    OrderItem,
+)
 
 from .serializers import (
     RegisterSerializer,
@@ -24,6 +36,8 @@ from .serializers import (
     RatingSerializer,
     RatingModerationSerializer,
     CouponSerializer,
+    OrderSerializer,
+    PlaceOrderSerializer,
 )
 
 
@@ -432,7 +446,7 @@ def cart_details(request, cart_id):
 
 
 # ============================================================
-# CHECKOUT
+# CHECKOUT  (OLD - kept untouched, only sends the email)
 # ============================================================
 
 @api_view(["POST"])
@@ -858,5 +872,256 @@ def coupon_detail(request, coupon_id):
             "message": "Coupon updated.",
             "coupon": serializer.data,
         },
+        status=status.HTTP_200_OK
+    )
+
+
+# ============================================================
+# NEW: PLACE ORDER (payment & checkout revision)
+# ============================================================
+
+# Delivery fee is Rs 80. To change it later, add DELIVERY_FEE = 100
+# in settings.py. No code change is needed here.
+DELIVERY_FEE = Decimal(str(getattr(settings, "DELIVERY_FEE", 80)))
+
+
+# used inside place_order to stop and roll back with a clear message
+class OrderError(Exception):
+    def __init__(self, message, http_status=status.HTTP_400_BAD_REQUEST):
+        super().__init__(message)
+        self.message = message
+        self.http_status = http_status
+
+
+def send_order_email(user, order):
+    """Sends the same order email as the old checkout view.
+    A failed email must never cancel an order that is already saved."""
+    try:
+        items = list(order.items.all())
+
+        # same template as before (extra order/items are available inside it)
+        html_content = render_to_string(
+            "Email/checkout.html",
+            {
+                "user": user,
+                "order": order,
+                "items": items,
+            }
+        )
+
+        item_lines = "\n".join(
+            f"- {i.product_name} x {i.quantity} = Rs {i.total_amount}"
+            for i in items
+        )
+
+        # same text as the old email, with the order details added
+        text_content = f"""
+        Hello {user.first_name or user.username},
+
+        Your order has been successfully placed.
+
+        Order number: {order.order_number}
+
+        {item_lines}
+
+        Subtotal: Rs {order.subtotal}
+        Delivery fee: Rs {order.delivery_fee}
+        Total: Rs {order.total}
+
+        Thank you for shopping with us.
+        """
+
+        email = EmailMultiAlternatives(
+            subject="Order Successfully Placed",
+            body=text_content,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[user.email],
+        )
+
+        email.attach_alternative(
+            html_content,
+            "text/html"
+        )
+
+        email.send(
+            fail_silently=False
+        )
+
+        return True
+
+    except Exception as e:
+        # shows the real reason in the Django terminal
+        print("ORDER EMAIL FAILED:", repr(e))
+        return False
+
+
+# POST /orders/place/
+# body: {
+#   "full_name": "...", "phone_number": "...", "address": "...",
+#   "note": "optional",
+#   "payment_method": "cod" | "online",
+#   "terms_accepted": true,              (required when payment_method = cod)
+#   "payment_reference": "optional"      (online: transaction id)
+# }
+# Items come from the logged-in user's cart, never from the request.
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def place_order(request):
+
+    serializer = PlaceOrderSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    data = serializer.validated_data
+    user = request.user
+
+    try:
+        # everything inside this block is saved together or not at all
+        with transaction.atomic():
+
+            cart = Cart.objects.filter(user=user).first()
+
+            if cart is None:
+                raise OrderError("Your cart is empty.")
+
+            cart_items = list(cart.cart_details.select_related("product"))
+
+            if not cart_items:
+                raise OrderError("Your cart is empty.")
+
+            # lock the products so two buyers cannot take the last stock together
+            products = {
+                p.id: p
+                for p in Product.objects.select_for_update().filter(
+                    id__in=[i.product_id for i in cart_items]
+                )
+            }
+
+            subtotal = Decimal("0")
+            order_lines = []
+
+            for item in cart_items:
+                product = products[item.product_id]
+
+                if item.quantity <= 0:
+                    raise OrderError(f"Invalid quantity for {product.name}.")
+
+                if item.quantity > product.quantity:
+                    raise OrderError(
+                        f"Only {product.quantity} of '{product.name}' left in stock."
+                    )
+
+                # always use the CURRENT product price, not the old cart price
+                line_total = product.price * item.quantity
+                subtotal += line_total
+                order_lines.append((product, item.quantity))
+
+            total = subtotal + DELIVERY_FEE
+
+            order = Order.objects.create(
+                user=user,
+                full_name=data["full_name"],
+                phone_number=data["phone_number"],
+                address=data["address"],
+                note=data.get("note", ""),
+                payment_method=data["payment_method"],
+                payment_status=Order.PaymentStatus.PENDING,
+                payment_reference=data.get("payment_reference", ""),
+                terms_accepted=bool(data.get("terms_accepted")),
+                order_status=Order.OrderStatus.PLACED,
+                subtotal=subtotal,
+                delivery_fee=DELIVERY_FEE,
+                total=total,
+            )
+
+            for product, qty in order_lines:
+                OrderItem.objects.create(
+                    order=order,
+                    product=product,
+                    product_name=product.name,
+                    price_per=product.price,
+                    quantity=qty,
+                )
+
+                # reduce stock
+                product.quantity -= qty
+                product.save(update_fields=["quantity"])
+
+            # empty the cart: the order is now saved
+            cart.cart_details.all().delete()
+
+    except OrderError as e:
+        return Response(
+            {"error": e.message},
+            status=e.http_status
+        )
+
+    except Exception as e:
+        return Response(
+            {"error": f"Could not place the order: {e}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    # outside the transaction on purpose: email problems must not undo the order
+    email_sent = send_order_email(user, order)
+
+    if order.payment_method == Order.PaymentMethod.COD:
+        message = "Order placed successfully. You will pay cash on delivery."
+    else:
+        message = "Order placed. Please complete the payment using the QR code."
+
+    return Response(
+        {
+            "message": message,
+            "email_sent": email_sent,
+            "order": OrderSerializer(order).data,
+        },
+        status=status.HTTP_201_CREATED
+    )
+
+
+# GET /orders/    -> the logged-in user's own orders
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def my_orders(request):
+
+    orders = (
+        Order.objects
+        .filter(user=request.user)
+        .prefetch_related("items")
+        .order_by("-created_at")
+    )
+
+    return Response(
+        OrderSerializer(orders, many=True).data,
+        status=status.HTTP_200_OK
+    )
+
+
+# GET /orders/<order_id>/    -> one order (owner or admin only)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def order_detail(request, order_id):
+
+    try:
+        order = Order.objects.prefetch_related("items").get(id=order_id)
+    except Order.DoesNotExist:
+        return Response(
+            {"error": "Order not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if order.user_id != request.user.id and not request.user.is_staff:
+        return Response(
+            {"error": "You can only view your own orders."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    return Response(
+        OrderSerializer(order).data,
         status=status.HTTP_200_OK
     )

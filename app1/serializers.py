@@ -5,7 +5,17 @@ from django.utils.html import strip_tags
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, Category, Product, Cart, CartDetails, Rating, Coupon
+from .models import (
+    User,
+    Category,
+    Product,
+    Cart,
+    CartDetails,
+    Rating,
+    Coupon,
+    Order,
+    OrderItem,
+)
 
 
 # ============================================================
@@ -361,4 +371,114 @@ class CouponSerializer(serializers.ModelSerializer):
                 {"usage_limit": "Usage limit cannot be lower than the times already used."}
             )
 
+        return data
+
+
+# ============================================================
+# ORDER SERIALIZERS  (NEW - payment & checkout revision)
+# ============================================================
+
+class OrderItemSerializer(serializers.ModelSerializer):
+
+    total_amount = serializers.ReadOnlyField()
+
+    class Meta:
+        model = OrderItem
+
+        fields = [
+            "id",
+            "product",
+            "product_name",
+            "price_per",
+            "quantity",
+            "total_amount",
+        ]
+
+
+class OrderSerializer(serializers.ModelSerializer):
+
+    order_number = serializers.ReadOnlyField()
+    items = OrderItemSerializer(many=True, read_only=True)
+    payment_method_label = serializers.CharField(
+        source="get_payment_method_display",
+        read_only=True
+    )
+
+    class Meta:
+        model = Order
+
+        fields = [
+            "id",
+            "order_number",
+            "full_name",
+            "phone_number",
+            "address",
+            "note",
+            "payment_method",
+            "payment_method_label",
+            "payment_status",
+            "payment_reference",
+            "terms_accepted",
+            "order_status",
+            "subtotal",
+            "delivery_fee",
+            "total",
+            "items",
+            "created_at",
+        ]
+
+
+# What React sends when the customer presses "Place Order".
+# Items are NOT sent: the server reads them from the user's own cart,
+# so nobody can fake prices or quantities.
+class PlaceOrderSerializer(serializers.Serializer):
+
+    full_name = serializers.CharField(max_length=150)
+    phone_number = serializers.CharField(max_length=20)
+    address = serializers.CharField(max_length=500)
+    note = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+
+    payment_method = serializers.ChoiceField(choices=Order.PaymentMethod.choices)
+
+    # must be true for Cash on Delivery
+    terms_accepted = serializers.BooleanField(required=False, default=False)
+
+    # optional: transaction id after paying by QR
+    payment_reference = serializers.CharField(
+        max_length=100, required=False, allow_blank=True, default=""
+    )
+
+    def validate_full_name(self, value):
+        value = strip_tags(value).strip()
+        if not value:
+            raise serializers.ValidationError("Full name is required.")
+        return value
+
+    def validate_phone_number(self, value):
+        value = strip_tags(value).strip()
+        digits = value.replace("+", "").replace("-", "").replace(" ", "")
+        if not digits.isdigit() or len(digits) < 7:
+            raise serializers.ValidationError("Enter a valid phone number.")
+        return value
+
+    def validate_address(self, value):
+        value = strip_tags(value).strip()
+        if not value:
+            raise serializers.ValidationError("Delivery address is required.")
+        return value
+
+    def validate_note(self, value):
+        return strip_tags(value).strip()
+
+    def validate_payment_reference(self, value):
+        return strip_tags(value).strip()
+
+    def validate(self, data):
+        if (
+            data["payment_method"] == Order.PaymentMethod.COD
+            and not data.get("terms_accepted")
+        ):
+            raise serializers.ValidationError(
+                {"terms_accepted": "You must accept the terms and conditions for Cash on Delivery."}
+            )
         return data

@@ -17,6 +17,9 @@ from .views import (
     moderation_review_detail,
     coupon_list,
     coupon_detail,
+    place_order,
+    my_orders,
+    order_detail,
 )
 
 urlpatterns = [
@@ -42,7 +45,7 @@ urlpatterns = [
     path("moderation/reviews/", moderation_review_list, name="moderation_review_list"),
     path("moderation/reviews/<int:review_id>/", moderation_review_detail, name="moderation_review_detail"),
 
-    # ADMIN COUPONS (NEW)
+    # ADMIN COUPONS
     path("manage/coupons/", coupon_list, name="coupon_list"),
     path("manage/coupons/<int:coupon_id>/", coupon_detail, name="coupon_detail"),
 
@@ -52,6 +55,11 @@ urlpatterns = [
     path("cart/item/<int:item_id>/", cart_item_detail, name="cart_item_detail"),
     path("cart/<int:cart_id>/", cart_details, name="cart_details"),
 
-    # CHECKOUT
+    # CHECKOUT (OLD - kept, only sends the email)
     path("checkout/", checkout, name="checkout"),
+
+    # ORDERS (NEW - payment & checkout revision)
+    path("orders/place/", place_order, name="place_order"),
+    path("orders/", my_orders, name="my_orders"),
+    path("orders/<int:order_id>/", order_detail, name="order_detail"),
 ]
