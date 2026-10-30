@@ -9,6 +9,8 @@ from .views import (
     add_to_cart,
     cart_item_detail,
     cart_details,
+    product_detail,
+    product_stock,
     checkout,
     rate_product,
     product_reviews,
@@ -33,6 +35,8 @@ urlpatterns = [
 
     # PRODUCT
     path("products/", product_list, name="product_list"),
+    path("products/<int:product_id>/", product_detail, name="product_detail"),
+    path("products/<int:product_id>/stock/", product_stock, name="product_stock"),
 
     # PRODUCT RATING (old quick-rate endpoint)
     path("products/<int:product_id>/rate/", rate_product, name="rate_product"),

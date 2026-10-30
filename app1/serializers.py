@@ -94,6 +94,8 @@ class LoginSerializer(serializers.Serializer):
                 "full_name": user.full_name,
                 "email": user.email,
                 "phone_number": user.phone_number,
+                # True for admin (staff) accounts, False for customers
+                "is_admin": user.is_staff,
             },
 
             "tokens": {
@@ -134,6 +136,9 @@ class ProductSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
+    # False when the stock is finished
+    is_available = serializers.SerializerMethodField()
+
     class Meta:
         model = Product
 
@@ -143,11 +148,25 @@ class ProductSerializer(serializers.ModelSerializer):
             "description",
             "price",
             "quantity",
+            "is_available",
             "category",
             "average_rating",
             "review_count",
             "rating_count",
         ]
+
+    def get_is_available(self, obj):
+        return obj.quantity > 0
+
+    def validate_quantity(self, value):
+        if value < 0:
+            raise serializers.ValidationError("Quantity cannot be negative.")
+        return value
+
+    def validate_price(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Price must be more than 0.")
+        return value
 
 
 # ============================================================
@@ -158,6 +177,7 @@ class CartDetailsSerializer(serializers.ModelSerializer):
 
     total_amount = serializers.ReadOnlyField()
     product_name = serializers.SerializerMethodField()
+    available_quantity = serializers.SerializerMethodField()
 
     class Meta:
         model = CartDetails
@@ -170,10 +190,14 @@ class CartDetailsSerializer(serializers.ModelSerializer):
             "price_per",
             "quantity",
             "total_amount",
+            "available_quantity",
         ]
 
     def get_product_name(self, obj):
         return obj.product.name
+
+    def get_available_quantity(self, obj):
+        return obj.product.quantity
 
 
 # ============================================================
@@ -446,6 +470,14 @@ class PlaceOrderSerializer(serializers.Serializer):
     # optional: transaction id after paying by QR
     payment_reference = serializers.CharField(
         max_length=100, required=False, allow_blank=True, default=""
+    )
+
+    # optional: which cart lines to order (CartDetails ids).
+    # If it is missing, the whole cart is ordered.
+    item_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
     )
 
     def validate_full_name(self, value):

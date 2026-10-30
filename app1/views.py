@@ -7,6 +7,8 @@ from rest_framework.permissions import (
     IsAuthenticatedOrReadOnly,
     IsAdminUser,
     AllowAny,
+    BasePermission,
+    SAFE_METHODS,
 )
 from rest_framework.response import Response
 from django.core.mail import EmailMultiAlternatives
@@ -44,6 +46,18 @@ from .serializers import (
 # ============================================================
 # HELPERS
 # ============================================================
+
+# Everyone can look (GET). Only admin (staff) accounts can add/change/delete.
+class IsAdminOrReadOnly(BasePermission):
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and request.user.is_staff
+        )
+
 
 def user_has_purchased(user, product):
     # TODO: after we create Order and OrderItem models,
@@ -157,9 +171,10 @@ def category_list(request):
 # PRODUCT
 # ============================================================
 
-# GET /products/
+# GET /products/   (anyone)
+# POST /products/  (admin only)
 @api_view(["GET", "POST"])
-@permission_classes([AllowAny])
+@permission_classes([IsAdminOrReadOnly])
 def product_list(request):
 
     # GET /products/
@@ -196,6 +211,109 @@ def product_list(request):
     return Response(
         serializer.errors,
         status=status.HTTP_400_BAD_REQUEST
+    )
+
+
+# ============================================================
+# NEW: ADMIN PRODUCT MANAGEMENT
+# ============================================================
+
+# PATCH  /products/<product_id>/   body: any of name, description, price, quantity, category
+# DELETE /products/<product_id>/
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAdminUser])
+def product_detail(request, product_id):
+
+    try:
+        product = Product.objects.get(id=product_id)
+    except Product.DoesNotExist:
+        return Response(
+            {"error": "Product not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "DELETE":
+        product.delete()
+        return Response(
+            {"message": "Product deleted."},
+            status=status.HTTP_200_OK
+        )
+
+    serializer = ProductSerializer(
+        product,
+        data=request.data,
+        partial=True
+    )
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    serializer.save()
+
+    return Response(
+        {
+            "message": "Product updated.",
+            "product": serializer.data,
+        },
+        status=status.HTTP_200_OK
+    )
+
+
+# POST /products/<product_id>/stock/   body: {"change": 5}  or  {"change": -5}
+# Adds or removes stock. Stock can never go below 0.
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def product_stock(request, product_id):
+
+    try:
+        change = int(request.data.get("change"))
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "change must be a whole number, like 5 or -5"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if change == 0:
+        return Response(
+            {"error": "change cannot be 0"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    with transaction.atomic():
+
+        try:
+            product = Product.objects.select_for_update().get(id=product_id)
+        except Product.DoesNotExist:
+            return Response(
+                {"error": "Product not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        new_quantity = product.quantity + change
+
+        if new_quantity < 0:
+            return Response(
+                {
+                    "error": (
+                        f"Only {product.quantity} in stock. "
+                        f"You cannot remove {abs(change)}."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        product.quantity = new_quantity
+        product.save(update_fields=["quantity"])
+
+    return Response(
+        {
+            "message": f"Stock updated. {product.quantity} available now.",
+            "product": ProductSerializer(product).data,
+        },
+        status=status.HTTP_200_OK
     )
 
 
@@ -317,16 +435,46 @@ def add_to_cart(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
+    # Quantity must be a whole number of 1 or more
+    try:
+        quantity = int(quantity)
+    except (TypeError, ValueError):
+        return Response(
+            {"error": "Quantity must be a number"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if quantity < 1:
+        return Response(
+            {"error": "Quantity must be at least 1"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Stock check: finished products cannot be added
+    if product.quantity <= 0:
+        return Response(
+            {"error": f"{product.name} is unavailable right now."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
     # Check whether product already exists in cart
     cart_detail = CartDetails.objects.filter(
         cart=cart,
         product=product
     ).first()
 
+    already_in_cart = cart_detail.quantity if cart_detail else 0
+
+    if already_in_cart + quantity > product.quantity:
+        return Response(
+            {"error": f"Only {product.quantity} of {product.name} available."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
     if cart_detail:
 
         # Increase existing quantity
-        cart_detail.quantity += int(quantity)
+        cart_detail.quantity += quantity
 
         cart_detail.save()
 
@@ -393,6 +541,12 @@ def cart_item_detail(request, item_id):
         return Response(
             {"message": "Item removed from cart"},
             status=status.HTTP_200_OK
+        )
+
+    if quantity > item.product.quantity:
+        return Response(
+            {"error": f"Only {item.product.quantity} of {item.product.name} available."},
+            status=status.HTTP_400_BAD_REQUEST
         )
 
     item.quantity = quantity
@@ -988,10 +1142,24 @@ def place_order(request):
             if cart is None:
                 raise OrderError("Your cart is empty.")
 
-            cart_items = list(cart.cart_details.select_related("product"))
+            # order only the selected cart lines (or the whole cart if none sent)
+            selected_ids = data.get("item_ids")
+            cart_lines = cart.cart_details.select_related("product")
+
+            if selected_ids:
+                selected_ids = set(selected_ids)
+                cart_lines = cart_lines.filter(id__in=selected_ids)
+
+            cart_items = list(cart_lines)
 
             if not cart_items:
                 raise OrderError("Your cart is empty.")
+
+            if selected_ids and len(cart_items) != len(selected_ids):
+                raise OrderError(
+                    "Some selected items are no longer in your cart. "
+                    "Please check your cart and try again."
+                )
 
             # lock the products so two buyers cannot take the last stock together
             products = {
@@ -1051,8 +1219,10 @@ def place_order(request):
                 product.quantity -= qty
                 product.save(update_fields=["quantity"])
 
-            # empty the cart: the order is now saved
-            cart.cart_details.all().delete()
+            # remove only the ordered items from the cart (others stay)
+            CartDetails.objects.filter(
+                id__in=[i.id for i in cart_items]
+            ).delete()
 
     except OrderError as e:
         return Response(
