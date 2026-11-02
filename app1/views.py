@@ -125,34 +125,27 @@ def login_view(request):
 # CATEGORY
 # ============================================================
 
-# GET /categories/
+# ============================================================
+# CATEGORY
+# ============================================================
+
+# GET  /categories/   (anyone)
+# POST /categories/   (admin only)
 @api_view(["GET", "POST"])
-@permission_classes([AllowAny])
+@permission_classes([IsAdminOrReadOnly])
 def category_list(request):
 
-    # GET /categories/
     if request.method == "GET":
-
-        categories = Category.objects.all()
-
-        serializer = CategorySerializer(
-            categories,
-            many=True
-        )
-
+        categories = Category.objects.all().order_by("name", "id")
         return Response(
-            serializer.data,
+            CategorySerializer(categories, many=True).data,
             status=status.HTTP_200_OK
         )
 
-    # POST /categories/
-    serializer = CategorySerializer(
-        data=request.data
-    )
+    serializer = CategorySerializer(data=request.data)
 
     if serializer.is_valid():
         serializer.save()
-
         return Response(
             {
                 "message": "Category added successfully.",
@@ -161,12 +154,56 @@ def category_list(request):
             status=status.HTTP_201_CREATED
         )
 
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# GET    /categories/<category_id>/   (anyone)
+# PATCH  /categories/<category_id>/   (admin only)
+# DELETE /categories/<category_id>/   (admin only)
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAdminOrReadOnly])
+def category_detail(request, category_id):
+
+    try:
+        category = Category.objects.get(id=category_id)
+    except Category.DoesNotExist:
+        return Response(
+            {"error": "Category not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if request.method == "GET":
+        return Response(CategorySerializer(category).data, status=status.HTTP_200_OK)
+
+    if request.method == "DELETE":
+        # Product.category uses CASCADE, so deleting a category would silently
+        # delete all its products. Block that.
+        product_count = Product.objects.filter(category=category).count()
+        if product_count:
+            return Response(
+                {
+                    "error": (
+                        f"This category has {product_count} product(s). "
+                        "Move or delete those products first."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        category.delete()
+        return Response({"message": "Category deleted."}, status=status.HTTP_200_OK)
+
+    # PATCH
+    serializer = CategorySerializer(category, data=request.data, partial=True)
+
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer.save()
+
     return Response(
-        serializer.errors,
-        status=status.HTTP_400_BAD_REQUEST
+        {"message": "Category updated.", "category": serializer.data},
+        status=status.HTTP_200_OK
     )
-
-
 # ============================================================
 # PRODUCT
 # ============================================================

@@ -113,13 +113,21 @@ class CategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Category
+        fields = ["id", "name", "description"]
 
-        fields = [
-            "id",
-            "name",
-            "description",
-        ]
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name cannot be empty.")
 
+        # block duplicate names, but let old duplicate rows keep their name
+        if self.instance is None or self.instance.name.lower() != value.lower():
+            if Category.objects.filter(name__iexact=value).exists():
+                raise serializers.ValidationError("A category with this name already exists.")
+        return value
+
+    def validate_description(self, value):
+        return value.strip()
 
 # ============================================================
 # PRODUCT SERIALIZER

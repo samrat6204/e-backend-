@@ -22,6 +22,7 @@ from .views import (
     place_order,
     my_orders,
     order_detail,
+    category_detail,
 )
 
 urlpatterns = [
@@ -32,6 +33,7 @@ urlpatterns = [
 
     # CATEGORY
     path("categories/", category_list, name="categories"),
+    path("categories/<int:category_id>/", category_detail, name="category_detail"),  
 
     # PRODUCT
     path("products/", product_list, name="product_list"),
