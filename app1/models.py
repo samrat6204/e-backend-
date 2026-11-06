@@ -11,8 +11,8 @@ from django.utils import timezone
 
 
 class User(AbstractUser):
-    full_name = models.CharField(max_length=150)
-    phone_number = models.CharField(max_length=20, unique=True)
+    full_name = models.CharField(max_length=151)
+    phone_number = models.CharField(max_length=21, unique=True)
     email = models.EmailField(unique=True)
 
     def __str__(self):
