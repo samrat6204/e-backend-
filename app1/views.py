@@ -190,7 +190,7 @@ def category_detail(request, category_id):
                 status=status.HTTP_400_BAD_REQUEST
             )
         category.delete()
-        return Response({"message": "Category deleted."}, status=status.HTTP_200_OK)
+        return Response({"message": "Category deleted Thankyou."}, status=status.HTTP_200_OK)
 
     # PATCH
     serializer = CategorySerializer(category, data=request.data, partial=True)
@@ -239,7 +239,7 @@ def product_list(request):
 
         return Response(
             {
-                "message": "Product added successfully.",
+                "message": "Product added successfully Thankyou.",
                 "product": serializer.data
             },
             status=status.HTTP_201_CREATED
