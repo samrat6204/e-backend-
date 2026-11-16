@@ -6,6 +6,7 @@ from django.db.models import Avg, Count
 from django.utils import timezone
 
 # Models for the e-commerce app
+# new work begin
 # updated: Week 7 - Ratings & Reviews, Coupons
 # updated: Payment & checkout revision - Order, OrderItem (added at the bottom)
 
