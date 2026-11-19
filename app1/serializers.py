@@ -157,6 +157,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "price",
             "quantity",
             "is_available",
+            "image",
             "category",
             "average_rating",
             "review_count",
