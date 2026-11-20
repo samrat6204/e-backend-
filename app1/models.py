@@ -7,6 +7,7 @@ from django.utils import timezone
 
 # Models for the e-commerce app
 # new work begin
+# last updated: 2026-11-19
 # updated: Week 7 - Ratings & Reviews, Coupons
 # updated: Payment & checkout revision - Order, OrderItem (added at the bottom)
 
