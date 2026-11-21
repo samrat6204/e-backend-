@@ -1,26 +1,43 @@
 """
-URL configuration for Djangofirstday project.
+Saauzi — Root URL Configuration
+================================
+All requests come here first.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.1/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+URL structure:
+  /admin/          → Django admin panel
+  /api/<path>      → All app1 API endpoints (with /api/ prefix)
+  /<path>          → Same app1 endpoints (without prefix, for React pages)
+  /media/<file>    → Uploaded product images served in development
+
+Authentication:
+  - Public endpoints  : No token required (register, login, GET products/categories)
+  - Protected endpoints: Require  →  Authorization: Bearer <access_token>
+  - Admin endpoints   : Require   →  is_staff = True on the user account
 """
+
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
+
+    # ── Django Admin Panel ───────────────────────────────────────────────────
+    # Access at /admin/ — login with a superuser account.
+    # Create superuser: py manage.py createsuperuser
     path("admin/", admin.site.urls),
+
+    # ── API Routes (with /api/ prefix) ───────────────────────────────────────
+    # Example: POST /api/login/   GET /api/products/
+    # Used by the React app for auth endpoints (login, register).
     path("api/", include("app1.urls")),
+
+    # ── API Routes (without prefix) ──────────────────────────────────────────
+    # Example: GET /products/   POST /cart/add/
+    # Used by React pages for products, categories, cart, orders.
     path("", include("app1.urls")),
+
+# ── Media Files (development only) ───────────────────────────────────────────
+# Serves uploaded product images at /media/<filename> during development.
+# In production, serve media files via Nginx or a CDN instead.
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
